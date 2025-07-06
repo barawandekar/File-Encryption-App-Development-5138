@@ -3,6 +3,7 @@ import { motion } from 'framer-motion';
 import * as FiIcons from 'react-icons/fi';
 import SafeIcon from '../common/SafeIcon';
 import { decryptFile, decryptZipFile, downloadWithFolderStructure } from '../utils/encryption';
+import { extract7zArchive, is7zSupported } from '../utils/7zencryption';
 import FileDropZone from './FileDropZone';
 import ProgressBar from './ProgressBar';
 import YubiKeyAuth from './YubiKeyAuth';
@@ -20,6 +21,12 @@ const DecryptionPanel = ({ onAddToHistory }) => {
   const [decryptedResult, setDecryptedResult] = useState(null);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [is7zAvailable, setIs7zAvailable] = useState(false);
+
+  // Check enhanced compression support on component mount
+  React.useEffect(() => {
+    is7zSupported().then(setIs7zAvailable);
+  }, []);
 
   const handleFileSelect = useCallback((selectedFile) => {
     setFile(selectedFile);
@@ -45,14 +52,17 @@ const DecryptionPanel = ({ onAddToHistory }) => {
       setError('Please select an encrypted file');
       return false;
     }
+
     if (!password) {
       setError('Please enter the decryption password');
       return false;
     }
+
     if (requiresHardwareKey && !hardwareKey) {
       setError('Hardware key authentication required for this file');
       return false;
     }
+
     return true;
   };
 
@@ -67,12 +77,29 @@ const DecryptionPanel = ({ onAddToHistory }) => {
       const hwKey = requiresHardwareKey ? hardwareKey : null;
       let decrypted;
 
+      // Check if it's an enhanced archive (7z)
+      if (file.name.endsWith('.7z')) {
+        if (!is7zAvailable) {
+          throw new Error('Enhanced compression support is not available in this environment');
+        }
+
+        decrypted = await extract7zArchive(file, password, (progressValue) => {
+          setProgress(progressValue);
+        });
+
+        const fileCount = decrypted.files.length;
+        setDecryptedResult(decrypted);
+        setSuccess(
+          `Successfully extracted enhanced archive with ${fileCount} files!` +
+          (decrypted.metadata.encryptionMethod ? ` (${decrypted.metadata.encryptionMethod} encryption)` : '')
+        );
+      }
       // Check if it's a zip file (multiple files/folders)
-      if (file.name.endsWith('.zip')) {
+      else if (file.name.endsWith('.zip')) {
         decrypted = await decryptZipFile(file, password, hwKey, (progressValue) => {
           setProgress(progressValue);
         });
-        
+
         const fileCount = decrypted.files.length;
         const folderCount = decrypted.metadata?.folderCount || 0;
         
@@ -86,7 +113,9 @@ const DecryptionPanel = ({ onAddToHistory }) => {
         decrypted = await decryptFile(file, password, hwKey);
         setProgress(100);
         
-        setDecryptedResult({ files: [decrypted] });
+        setDecryptedResult({
+          files: [decrypted]
+        });
         setSuccess('File decrypted successfully!');
       }
 
@@ -95,8 +124,10 @@ const DecryptionPanel = ({ onAddToHistory }) => {
         fileName: file.name,
         fileSize: file.size,
         status: 'success',
-        useHardwareKey: requiresHardwareKey
+        useHardwareKey: requiresHardwareKey,
+        archiveFormat: file.name.endsWith('.7z') ? '7z' : file.name.endsWith('.zip') ? 'zip' : 'single'
       });
+
     } catch (err) {
       // Check if error indicates hardware key requirement
       if (err.message.includes('Hardware key authentication required')) {
@@ -165,7 +196,7 @@ const DecryptionPanel = ({ onAddToHistory }) => {
         <h3 className="text-lg font-medium text-white mb-3">
           Decrypted Content ({files.length} files)
         </h3>
-        
+
         {metadata && (
           <div className="mb-4 p-3 bg-blue-500/10 border border-blue-500/20 rounded-lg">
             <div className="flex items-center space-x-2 mb-2">
@@ -179,7 +210,19 @@ const DecryptionPanel = ({ onAddToHistory }) => {
               {metadata.individualFileCount > 0 && (
                 <p>📄 {metadata.individualFileCount} individual files</p>
               )}
-              <p>🕒 Created: {new Date(metadata.timestamp).toLocaleString()}</p>
+              {metadata.encryptionMethod && (
+                <p>🔐 Encryption: {metadata.encryptionMethod}</p>
+              )}
+              {metadata.extractedFrom && (
+                <p>📦 Format: {metadata.extractedFrom === '7z' ? 'Enhanced Archive' : metadata.extractedFrom.toUpperCase()}</p>
+              )}
+              {metadata.compressionMethod && (
+                <p>🗜️ Compression: {metadata.compressionMethod}</p>
+              )}
+              {metadata.filenamesEncrypted && (
+                <p>👁️ Filenames: Encrypted</p>
+              )}
+              <p>🕒 {metadata.extractedFrom === '7z' ? 'Extracted' : 'Created'}: {new Date(metadata.timestamp).toLocaleString()}</p>
             </div>
           </div>
         )}
@@ -196,7 +239,9 @@ const DecryptionPanel = ({ onAddToHistory }) => {
               <div className="ml-6 space-y-1">
                 {folderFiles.slice(0, 5).map((file, idx) => (
                   <p key={idx} className="text-xs text-slate-400 truncate">
-                    {file.metadata.relativePath.split('/').slice(1).join('/')}
+                    {file.metadata.relativePath ? 
+                      file.metadata.relativePath.split('/').slice(1).join('/') : 
+                      file.filename}
                   </p>
                 ))}
                 {folderFiles.length > 5 && (
@@ -213,6 +258,12 @@ const DecryptionPanel = ({ onAddToHistory }) => {
             <div key={`individual-${index}`} className="flex items-center space-x-3 p-2 bg-slate-800/50 rounded-lg">
               <SafeIcon icon={FiArchive} className="text-blue-400" />
               <span className="text-slate-300 text-sm">{file.filename}</span>
+              {file.metadata.extractedFrom7z && (
+                <span className="text-xs bg-purple-500/20 text-purple-400 px-2 py-1 rounded">Enhanced</span>
+              )}
+              {file.metadata.compressionMethod && (
+                <span className="text-xs bg-blue-500/20 text-blue-400 px-2 py-1 rounded">{file.metadata.compressionMethod}</span>
+              )}
             </div>
           ))}
         </div>
@@ -235,6 +286,9 @@ const DecryptionPanel = ({ onAddToHistory }) => {
           <div>
             <h2 className="text-2xl font-bold text-white">Decrypt Files & Folders</h2>
             <p className="text-slate-300">Restore your encrypted files and folder structures</p>
+            {is7zAvailable && (
+              <p className="text-green-400 text-sm">✓ Enhanced archives supported</p>
+            )}
           </div>
         </div>
 
@@ -243,9 +297,29 @@ const DecryptionPanel = ({ onAddToHistory }) => {
           <FileDropZone
             onFileSelect={handleFileSelect}
             selectedFiles={file}
-            acceptedTypes=".enc,.encrypted,.zip"
-            placeholder="Drop encrypted files (.enc) or archives (.zip) here"
+            acceptedTypes=".enc,.encrypted,.zip,.7z"
+            placeholder="Drop encrypted files (.enc), archives (.zip), or enhanced archives (.7z) here"
           />
+
+          {/* File Type Info */}
+          {file && (
+            <div className="bg-slate-700/30 border border-slate-600 rounded-lg p-3">
+              <div className="flex items-center space-x-2 text-sm">
+                <SafeIcon icon={FiArchive} className="text-blue-400" />
+                <span className="text-slate-300">Detected format:</span>
+                <span className="font-medium text-white">
+                  {file.name.endsWith('.7z') ? 'Enhanced Archive' :
+                   file.name.endsWith('.zip') ? 'ZIP Archive' :
+                   'Encrypted File'}
+                </span>
+                {file.name.endsWith('.7z') && (
+                  <span className="text-xs bg-purple-500/20 text-purple-400 px-2 py-1 rounded">
+                    Filename encryption supported
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Password Input */}
           <div>
@@ -278,9 +352,20 @@ const DecryptionPanel = ({ onAddToHistory }) => {
             </div>
           )}
 
+          {/* Enhanced Archive Notice */}
+          {file && file.name.endsWith('.7z') && !is7zAvailable && (
+            <div className="flex items-center space-x-2 p-4 bg-red-500/10 border border-red-500/20 rounded-lg">
+              <SafeIcon icon={FiAlertCircle} className="text-red-400" />
+              <span className="text-red-400">Enhanced archive support is not available in this environment</span>
+            </div>
+          )}
+
           {/* Progress Bar */}
           {isProcessing && (
-            <ProgressBar progress={progress} label="Decrypting files..." />
+            <ProgressBar
+              progress={progress}
+              label={file && file.name.endsWith('.7z') ? 'Extracting enhanced archive...' : 'Decrypting files...'}
+            />
           )}
 
           {/* Decrypted Files Preview */}
@@ -313,11 +398,11 @@ const DecryptionPanel = ({ onAddToHistory }) => {
           <div className="flex flex-col sm:flex-row gap-4">
             <button
               onClick={handleDecrypt}
-              disabled={isProcessing || !file || !password}
+              disabled={isProcessing || !file || !password || (file && file.name.endsWith('.7z') && !is7zAvailable)}
               className="flex-1 flex items-center justify-center space-x-2 px-6 py-3 bg-gradient-to-r from-orange-600 to-red-600 hover:from-orange-700 hover:to-red-700 disabled:from-slate-600 disabled:to-slate-600 text-white rounded-lg font-medium transition-all duration-200 disabled:cursor-not-allowed"
             >
               <SafeIcon icon={FiUnlock} className="text-lg" />
-              <span>{isProcessing ? 'Decrypting...' : 'Decrypt Files'}</span>
+              <span>{isProcessing ? 'Processing...' : 'Decrypt Files'}</span>
             </button>
 
             {decryptedResult && (

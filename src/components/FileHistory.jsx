@@ -4,7 +4,7 @@ import { format } from 'date-fns';
 import * as FiIcons from 'react-icons/fi';
 import SafeIcon from '../common/SafeIcon';
 
-const { FiClock, FiLock, FiUnlock, FiCheckCircle, FiXCircle, FiTrash2, FiShield, FiFolder } = FiIcons;
+const { FiClock, FiLock, FiUnlock, FiCheckCircle, FiXCircle, FiTrash2, FiShield, FiFolder, FiArchive } = FiIcons;
 
 const FileHistory = ({ history, onClearHistory }) => {
   const formatFileSize = (bytes) => {
@@ -31,6 +31,7 @@ const FileHistory = ({ history, onClearHistory }) => {
             <p className="text-slate-300">Recent encryption and decryption operations</p>
           </div>
         </div>
+
         {history.length > 0 && (
           <button
             onClick={onClearHistory}
@@ -71,9 +72,11 @@ const FileHistory = ({ history, onClearHistory }) => {
                   }`}>
                     <SafeIcon icon={entry.type === 'encrypt' ? FiLock : FiUnlock} className="text-lg" />
                   </div>
+
                   <div className="flex-1">
                     <div className="flex items-center space-x-2">
                       <p className="text-white font-medium">{entry.fileName}</p>
+                      
                       <div className={`flex items-center space-x-1 px-2 py-1 rounded-full text-xs ${
                         entry.status === 'success' 
                           ? 'bg-green-500/10 text-green-400' 
@@ -82,26 +85,50 @@ const FileHistory = ({ history, onClearHistory }) => {
                         <SafeIcon icon={entry.status === 'success' ? FiCheckCircle : FiXCircle} className="text-xs" />
                         <span>{entry.status}</span>
                       </div>
+
                       {entry.useHardwareKey && (
                         <div className="flex items-center space-x-1 px-2 py-1 bg-blue-500/10 text-blue-400 rounded-full text-xs">
                           <SafeIcon icon={FiShield} className="text-xs" />
                           <span>HW Key</span>
                         </div>
                       )}
+
                       {entry.fileName.includes('files') && (
                         <div className="flex items-center space-x-1 px-2 py-1 bg-purple-500/10 text-purple-400 rounded-full text-xs">
                           <SafeIcon icon={FiFolder} className="text-xs" />
                           <span>Multiple</span>
                         </div>
                       )}
+
+                      {entry.archiveFormat && entry.archiveFormat !== 'single' && (
+                        <div className="flex items-center space-x-1 px-2 py-1 bg-cyan-500/10 text-cyan-400 rounded-full text-xs">
+                          <SafeIcon icon={FiArchive} className="text-xs" />
+                          <span>{entry.archiveFormat.toUpperCase()}</span>
+                        </div>
+                      )}
+
+                      {entry.encryptedFilenames && (
+                        <div className="flex items-center space-x-1 px-2 py-1 bg-yellow-500/10 text-yellow-400 rounded-full text-xs">
+                          <SafeIcon icon={FiLock} className="text-xs" />
+                          <span>Names Encrypted</span>
+                        </div>
+                      )}
                     </div>
+
                     <div className="flex items-center space-x-4 text-sm text-slate-400 mt-1">
                       <span>{formatFileSize(entry.fileSize)}</span>
                       <span>•</span>
                       <span>{format(new Date(entry.timestamp), 'MMM dd, yyyy HH:mm')}</span>
                       <span>•</span>
                       <span className="capitalize">{entry.type}ed</span>
+                      {entry.archiveFormat && entry.archiveFormat !== 'single' && (
+                        <>
+                          <span>•</span>
+                          <span>{entry.archiveFormat.toUpperCase()}</span>
+                        </>
+                      )}
                     </div>
+
                     {entry.error && (
                       <p className="text-red-400 text-sm mt-1">{entry.error}</p>
                     )}
