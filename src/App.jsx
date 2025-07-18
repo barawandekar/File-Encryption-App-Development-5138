@@ -43,6 +43,7 @@ function App() {
           
           // Create encryption key from password
           const encoder = new TextEncoder();
+          const salt = crypto.getRandomValues(new Uint8Array(16));
           const keyMaterial = await crypto.subtle.importKey(
             'raw',
             encoder.encode(password),
@@ -54,7 +55,7 @@ function App() {
           const key = await crypto.subtle.deriveKey(
             {
               name: 'PBKDF2',
-              salt: crypto.getRandomValues(new Uint8Array(16)),
+              salt: salt,
               iterations: 100000,
               hash: 'SHA-256'
             },
@@ -73,17 +74,18 @@ function App() {
               fileData
             );
 
-            // Combine IV and encrypted data
-            const combinedData = new Uint8Array(iv.length + encryptedData.byteLength);
-            combinedData.set(iv, 0);
-            combinedData.set(new Uint8Array(encryptedData), iv.length);
+            // Combine salt + IV + encrypted data
+            const combinedData = new Uint8Array(salt.length + iv.length + encryptedData.byteLength);
+            combinedData.set(salt, 0);
+            combinedData.set(iv, salt.length);
+            combinedData.set(new Uint8Array(encryptedData), salt.length + iv.length);
 
-            // Download encrypted file
-            const blob = new Blob([combinedData], { type: 'application/encrypted' });
+            // Download encrypted file with .enc extension
+            const blob = new Blob([combinedData], { type: 'application/octet-stream' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = `${file.name}.encrypted`;
+            a.download = `${file.name}.enc`;
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
@@ -91,9 +93,32 @@ function App() {
           } else {
             // Decrypt
             try {
-              // Extract IV and encrypted data
-              const iv = new Uint8Array(fileData.slice(0, 12));
-              const encryptedData = new Uint8Array(fileData.slice(12));
+              // Extract salt, IV and encrypted data
+              const salt = new Uint8Array(fileData.slice(0, 16));
+              const iv = new Uint8Array(fileData.slice(16, 28));
+              const encryptedData = new Uint8Array(fileData.slice(28));
+
+              // Recreate the key with the same salt
+              const keyMaterial = await crypto.subtle.importKey(
+                'raw',
+                encoder.encode(password),
+                { name: 'PBKDF2' },
+                false,
+                ['deriveBits', 'deriveKey']
+              );
+
+              const key = await crypto.subtle.deriveKey(
+                {
+                  name: 'PBKDF2',
+                  salt: salt,
+                  iterations: 100000,
+                  hash: 'SHA-256'
+                },
+                keyMaterial,
+                { name: 'AES-GCM', length: 256 },
+                false,
+                ['encrypt', 'decrypt']
+              );
 
               const decryptedData = await crypto.subtle.decrypt(
                 { name: 'AES-GCM', iv },
@@ -101,12 +126,12 @@ function App() {
                 encryptedData
               );
 
-              // Download decrypted file
+              // Download decrypted file (remove .enc extension)
               const blob = new Blob([decryptedData], { type: 'application/octet-stream' });
               const url = URL.createObjectURL(blob);
               const a = document.createElement('a');
               a.href = url;
-              a.download = file.name.replace('.encrypted', '');
+              a.download = file.name.replace('.enc', '');
               document.body.appendChild(a);
               a.click();
               document.body.removeChild(a);
@@ -190,13 +215,16 @@ function App() {
                 <span>Click to select files</span>
               )}
             </p>
+            <p className="text-xs text-slate-400 mt-1">
+              {isEncrypting ? 'Any file type' : 'Only .enc files'}
+            </p>
             <input
               type="file"
               id="fileInput"
               multiple
               onChange={handleFileSelect}
               className="hidden"
-              accept={isEncrypting ? '*' : '.encrypted'}
+              accept={isEncrypting ? '*' : '.enc'}
             />
           </div>
         </div>
@@ -251,6 +279,15 @@ function App() {
               : 'Decrypt Files'}
           </span>
         </button>
+
+        {/* Info */}
+        <div className="mt-6 text-center text-xs text-slate-400">
+          <p>
+            {isEncrypting 
+              ? 'Encrypted files will have .enc extension' 
+              : 'Original filename will be restored'}
+          </p>
+        </div>
       </div>
     </div>
   );
