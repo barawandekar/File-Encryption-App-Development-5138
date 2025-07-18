@@ -35,17 +35,3 @@ button:focus {
 input[type="file"] {
   cursor: pointer;
 }
-
-/* Animation for drag and drop */
-.drag-over {
-  transform: scale(1.02);
-  transition: transform 0.2s ease;
-}
-
-/* Responsive design */
-@media (max-width: 768px) {
-  .container {
-    padding-left: 1rem;
-    padding-right: 1rem;
-  }
-}
